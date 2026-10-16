@@ -2,7 +2,7 @@
 # sirviendo desde S3_Bucket via Origin Access Control (OAC, no el OAI legacy)
 # (Requisitos 3.1, 3.2, 3.3, 3.4).
 resource "aws_cloudfront_origin_access_control" "frontend_oac" {
-  name                              = "spooky-guestbook-frontend-oac"
+  name                              = "spooky-guestbook-frontend-oac-${random_id.frontend_bucket_suffix.hex}"
   description                       = "OAC para que CloudFront_Distribution acceda a S3_Bucket de Frontend_Application."
   origin_access_control_origin_type = "s3"
   signing_behavior                  = "always"
