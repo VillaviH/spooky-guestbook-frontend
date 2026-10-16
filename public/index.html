@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spooky Guestbook</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <!--
+    Frontend_Application (SPA estatica).
+    El modulo cliente de API (js/api-client.js) realiza las llamadas
+    POST/GET /messages hacia Backend_API usando la URL base configurada
+    en js/config.js, y se conecta a onSubmitMessage/loadMessages
+    definidos en js/app.js.
+  -->
+  <main class="page">
+    <header class="page__header">
+      <h1 class="page__title">🎃 Spooky Guestbook</h1>
+      <p class="page__subtitle">Deja tu mensaje mas espeluznante para la posteridad...</p>
+    </header>
+
+    <section class="card" aria-labelledby="form-heading">
+      <h2 id="form-heading" class="card__heading">Escribe tu Spooky_Message</h2>
+      <form id="message-form" class="message-form" novalidate>
+        <label for="message-content" class="message-form__label">
+          Tu mensaje (maximo 280 caracteres)
+        </label>
+        <textarea
+          id="message-content"
+          name="content"
+          class="message-form__textarea"
+          maxlength="280"
+          rows="4"
+          placeholder="Algo acecha en las sombras..."
+          required
+        ></textarea>
+        <div class="message-form__footer">
+          <span id="char-counter" class="message-form__counter" aria-live="polite">0 / 280</span>
+          <button type="submit" id="submit-button" class="message-form__submit">
+            Enviar al mas alla 👻
+          </button>
+        </div>
+        <p id="form-error" class="message-form__error" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <section class="card" aria-labelledby="list-heading">
+      <h2 id="list-heading" class="card__heading">Mensajes del mas alla</h2>
+      <p id="list-empty" class="message-list__empty" hidden>
+        Todavia no hay mensajes. Se el primero en invocar uno 🕸️
+      </p>
+      <ul id="message-list" class="message-list"></ul>
+    </section>
+  </main>
+  <script src="js/config.js"></script>
+  <script src="js/api-client.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

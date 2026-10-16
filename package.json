@@ -1,0 +1,16 @@
+{
+  "name": "spooky-guestbook-frontend",
+  "version": "1.0.0",
+  "description": "Frontend_Application estatico (S3 + CloudFront) para el demo 'Spooky Guestbook' del hackathon.",
+  "private": true,
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "29.7.0",
+    "jest-environment-jsdom": "29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "jsdom"
+  }
+}

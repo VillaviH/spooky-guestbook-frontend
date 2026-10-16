@@ -1,0 +1,22 @@
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Terraform
+# .terraform.lock.hcl SI se versiona (fija versiones de providers, buena practica)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+tfplan*
+crash.log
+crash.*.log
+
+# Secrets / env
+.env
+.env.*
+
+# OS / editors
+.DS_Store
+*.swp

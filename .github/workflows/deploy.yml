@@ -1,0 +1,164 @@
+# Frontend_Pipeline (GitHub Actions) - tarea 23.1.
+#
+# Etapas: build -> terraform-validate -> deploy (terraform apply -> sync a
+# S3 -> invalidacion de CloudFront).
+#
+# Trigger automatico (Requisito 1.6): se dispara en cada push a la rama
+# principal (`main`) de Frontend_Repository. `workflow_dispatch` se mantiene
+# ademas para permitir una ejecucion manual (p. ej. para forzar un
+# redespliegue sin un commit nuevo).
+#
+# Nota sobre el Requisito 1.6 ("sin requerir ningun cambio en
+# Backend_Repository"): este workflow vive en el repositorio
+# Frontend_Repository y su trigger `on.push` solo observa el historial de
+# este mismo repositorio Git. Backend_Repository es un repositorio Git
+# completamente separado (ver tarea 1 vs. tarea 19): un push alli no genera
+# ningun evento que este workflow pueda observar, por lo que la
+# independencia de pipelines es consecuencia directa de la separacion de
+# repositorios, no de una condicion adicional dentro del YAML.
+name: Frontend_Pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  # Job `build` (Requisito 1.6/1.7): no hay un paso de bundling real para un
+  # sitio estatico HTML/CSS/JS sin bundler; "build" se reduce a confirmar que
+  # el artefacto a desplegar (public/) existe y contiene el punto de entrada
+  # de la SPA antes de gastar tiempo en aprovisionar infraestructura.
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verificar que public/index.html existe
+        run: test -f public/index.html
+
+  # Job `terraform-validate` (Requisito 7.4/7.6): corre `terraform fmt -check`
+  # y `terraform validate` (tarea 22.1, scripts/validate-terraform.sh) antes
+  # de cualquier `terraform apply`, para detectar errores de configuracion
+  # de forma temprana sin necesidad de credenciales de AWS.
+  terraform-validate:
+    name: terraform-validate
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
+      - name: Ejecutar validacion de Terraform (fmt -check + validate)
+        run: ./scripts/validate-terraform.sh
+
+  # Job `deploy` (Requisitos 1.6, 1.7, 7.4): solo se ejecuta si `build` y
+  # `terraform-validate` terminaron exitosamente (`needs:`). Aprovisiona
+  # S3_Bucket + CloudFront_Distribution via Terraform, sincroniza public/ al
+  # bucket, e invalida la cache de CloudFront.
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    needs: [build, terraform-validate]
+    # Requerido por aws-actions/configure-aws-credentials cuando se usa OIDC
+    # (role-to-assume) en lugar de credenciales estaticas de larga duracion.
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
+      # Credenciales de AWS: se recomienda OIDC (sin secretos de larga
+      # duracion almacenados en el repositorio, el token se emite por
+      # ejecucion y expira solo). Requiere haber creado previamente un
+      # IAM_Role con una politica de confianza para
+      # token.actions.githubusercontent.com, con el ARN guardado en el
+      # secret AWS_DEPLOY_ROLE_ARN del repositorio.
+      - name: Configurar credenciales de AWS (OIDC - recomendado)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      # Alternativa (NO recomendada para este caso, se deja documentada
+      # comentada): credenciales estaticas de un usuario IAM, almacenadas
+      # como secrets de larga duracion. Mas simple de configurar para una
+      # cuenta personal de hackathon, pero no sigue la practica recomendada
+      # actual de evitar access keys de larga duracion en CI/CD.
+      #
+      # - name: Configurar credenciales de AWS (estaticas - alternativa)
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: terraform init
+        run: terraform init -input=false
+
+      # terraform apply (Requisitos 1.7, 7.4, 7.6): aprovisiona S3_Bucket +
+      # CloudFront_Distribution en una sola ejecucion. `backend_api_base_url`
+      # se pasa via `-var`, respaldado por el secret/variable del repositorio
+      # BACKEND_API_BASE_URL (configurado una vez que Backend_Pipeline
+      # despliega Backend_API). Si no esta configurado, Terraform usa el
+      # default ("") definido en variables.tf.
+      - name: terraform apply
+        run: |
+          terraform apply -auto-approve -input=false \
+            -var="backend_api_base_url=${{ secrets.BACKEND_API_BASE_URL }}"
+
+      # Manejo de fallos (Requisitos 1.8, 7.6): GitHub Actions detiene el
+      # job automaticamente en el primer step que falla (ningun step de este
+      # job usa `continue-on-error`), por lo que si `terraform apply` falla a
+      # mitad de camino, los steps siguientes (sync a S3, invalidacion de
+      # CloudFront) NUNCA se ejecutan: no hay sync de un build parcialmente
+      # desplegado ni invalidacion de una distribucion con infraestructura
+      # incompleta. Ademas, segun el comportamiento documentado de Terraform
+      # (ver design.md, seccion "Infraestructura como Codigo"), los recursos
+      # que SI se aplicaron exitosamente antes del fallo permanecen en el
+      # state y no se destruyen automaticamente: no se pierde lo ya
+      # aprovisionado, solo se detiene el avance. El job queda marcado como
+      # fallido en la UI de GitHub Actions (reporte de estado observable,
+      # Requisito 7.6), y la version de Frontend_Application servida hasta
+      # ese momento por CloudFront_Distribution permanece intacta porque
+      # nunca se ejecuto un nuevo `aws s3 sync` ni una nueva invalidacion.
+
+      - name: Obtener nombre de S3_Bucket desde el output de Terraform
+        id: tf-outputs
+        run: |
+          echo "bucket_name=$(terraform output -raw s3_bucket_name)" >> "$GITHUB_OUTPUT"
+          echo "distribution_id=$(terraform output -raw cloudfront_distribution_id)" >> "$GITHUB_OUTPUT"
+
+      # Sync a S3 (Requisito 1.7): copia el contenido de public/ al bucket,
+      # eliminando en el bucket cualquier archivo que ya no exista
+      # localmente (--delete), para que el bucket refleje exactamente el
+      # estado del repositorio en este commit.
+      - name: Sync a S3
+        run: |
+          aws s3 sync public/ "s3://${{ steps.tf-outputs.outputs.bucket_name }}" --delete
+
+      # Invalidacion de CloudFront (Requisito 1.7): fuerza a que las
+      # ubicaciones de borde descarten su copia cacheada y vuelvan a
+      # obtener el contenido actualizado desde S3_Bucket en la siguiente
+      # solicitud (Requisito 3.4). Si este step falla (p. ej. error de
+      # permisos o de red), el job se marca como fallido y, al no haber mas
+      # steps despues de este, la version previamente servida por
+      # CloudFront_Distribution permanece intacta hasta la siguiente
+      # ejecucion exitosa del pipeline.
+      - name: Invalidacion de CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ steps.tf-outputs.outputs.distribution_id }}" \
+            --paths "/*"
